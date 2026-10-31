@@ -12,6 +12,7 @@ coverage/
 .DS_Store
 .playwright-mcp/
 .claude
+CLAUDE.local.md
 .conductor
 .kimi-stash-dir
 plugins/cdn/
