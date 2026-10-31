@@ -19,6 +19,8 @@ import {
 } from '#/llm-requester/thinking';
 import { classifyKimiQuotaError } from '#/llm/builtin/provider/kimi/errors';
 import { createKimiOpenAIRequester, createOpenAIRequester, kimiEndpoint } from '#/llm-requester/factories';
+import { kimiRequester, openAIRequester } from '#/llm/builtin/provider/index';
+import { createOpenAIRunRequester } from '#/llm-requester/openai';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm-requester/requester';
 
 const model: LlmModel = {
@@ -1018,5 +1020,78 @@ describe('openai requester thinking', () => {
       { type: 'think', think: 'We', reasoningKey: 'reasoning' },
       { type: 'text', text: 'ok' },
     ]);
+  });
+});
+
+describe('kimi openai thinking prefill', () => {
+  const history: readonly Message[] = [
+    createUserMessage('hi'),
+    createAssistantMessage([{ type: 'text', text: 'hello' }]),
+    createUserMessage('continue'),
+  ];
+  const tools = [
+    { name: 'get_weather', description: 'get weather', parameters: { type: 'object' } },
+  ];
+
+  async function sentBody(
+    base: typeof kimiRequester,
+    thinkingPrefill: string | undefined,
+  ): Promise<Record<string, unknown>> {
+    const client = stubOpenAIClient(chatCompletionChunks());
+    const requester = createOpenAIRunRequester(
+      base.with({ protocol: { options: { thinkingPrefill } } }),
+      {
+        ...kimiOpenAI,
+        clientFactory: client.clientFactory,
+        options: () => ({ toolMessageConversion: 'keep_parts' }),
+      },
+    );
+    await requester.generate(
+      {
+        model: thinkingCapableModel(),
+        thinking: { effort: 'on' },
+        systemPrompt: 'be brief',
+        tools,
+      },
+      { messages: history },
+      { signal: new AbortController().signal },
+    );
+    return client.body();
+  }
+
+  it('appends a trailing partial assistant message carrying the reasoning prefix', async () => {
+    const body = await sentBody(kimiRequester, 'Let me think step by step.');
+    const sent = bodyMessages(body);
+    expect(sent.map((message) => message['role'])).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(sent[0]?.['content']).toBe('be brief');
+    expect(sent[3]?.['content']).toBe('continue');
+    expect(sent.at(-1)).toEqual({
+      role: 'assistant',
+      content: '',
+      reasoning_content: 'Let me think step by step.',
+      partial: true,
+    });
+    expect((body['tools'] as Record<string, unknown>[]).length).toBe(1);
+    expect(body['thinking']).toEqual({ type: 'enabled' });
+  });
+
+  it('sends no partial message without a prefill or on the plain openai protocol', async () => {
+    const plainKimi = bodyMessages(await sentBody(kimiRequester, undefined));
+    expect(plainKimi.map((message) => message['role'])).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'user',
+    ]);
+    expect(plainKimi.some((message) => 'partial' in message)).toBe(false);
+    const openai = bodyMessages(await sentBody(openAIRequester, 'ignored'));
+    expect(openai.at(-1)?.['role']).toBe('user');
+    expect(openai.some((message) => 'partial' in message)).toBe(false);
   });
 });

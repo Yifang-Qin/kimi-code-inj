@@ -187,8 +187,23 @@ export class SessionEventHandler {
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
   private stepRetryAttemptTimer: ReturnType<typeof setTimeout> | undefined;
+  // `/inj` prefixes awaiting their turn (keyed by the submission's promptId),
+  // then awaiting that turn's first step (keyed by turnId). Rendering deletes
+  // the entry, so a retried step re-emitting turn.step.started shows it once.
+  private readonly pendingThinkingPrefills = new Map<string, string>();
+  private readonly turnThinkingPrefills = new Map<string, string>();
+
+  registerThinkingPrefill(promptId: string, prefix: string): void {
+    this.pendingThinkingPrefills.set(promptId, prefix);
+  }
+
+  dropThinkingPrefill(promptId: string): void {
+    this.pendingThinkingPrefills.delete(promptId);
+  }
 
   resetRuntimeState(): void {
+    this.pendingThinkingPrefills.clear();
+    this.turnThinkingPrefills.clear();
     this.backgroundTasks.clear();
     this.backgroundTaskTranscriptedTerminal.clear();
     this.backgroundTaskTerminalEntries.clear();
@@ -351,6 +366,12 @@ export class SessionEventHandler {
 
   private handleTurnBegin(event: TurnStartedEvent): void {
     this.host.handleTurnStarted?.(event);
+    const prefix =
+      event.promptId === undefined ? undefined : this.pendingThinkingPrefills.get(event.promptId);
+    if (event.promptId !== undefined && prefix !== undefined) {
+      this.pendingThinkingPrefills.delete(event.promptId);
+      this.turnThinkingPrefills.set(String(event.turnId), prefix);
+    }
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
@@ -401,6 +422,7 @@ export class SessionEventHandler {
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.handleTurnEnded?.(event);
+    this.turnThinkingPrefills.delete(String(event.turnId));
     this.host.streamingUI.flushNow();
     this.clearStepRetry();
     if (event.reason === 'cancelled') {
@@ -446,6 +468,11 @@ export class SessionEventHandler {
     this.host.streamingUI.setStep(event.step);
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
+    const prefix = this.turnThinkingPrefills.get(String(event.turnId));
+    if (prefix !== undefined) {
+      this.turnThinkingPrefills.delete(String(event.turnId));
+      this.host.streamingUI.appendThinkingPrefill(prefix);
+    }
     this.host.patchLivePane({
       mode: 'waiting',
       pendingApproval: null,

@@ -5,6 +5,7 @@ import { AssistantMessageComponent } from '../components/messages/assistant-mess
 import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
+import { ThinkingPrefillComponent } from '../components/messages/thinking-prefill';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
 import { hasDispose } from '../utils/component-capabilities';
@@ -672,6 +673,14 @@ export class StreamingUIController {
     } else {
       this._activeThinkingComponent.setText(fullText);
     }
+    state.ui.requestRender();
+  }
+
+  appendThinkingPrefill(prefix: string): void {
+    const { state } = this.host;
+    this._pendingAgentGroup = null;
+    this._pendingReadGroup = null;
+    state.transcriptContainer.addChild(new ThinkingPrefillComponent(prefix));
     state.ui.requestRender();
   }
 

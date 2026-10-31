@@ -2,6 +2,9 @@ import { createDecorator } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
@@ -16,6 +19,7 @@ import {
   type PromptPayload,
   type SteerPayload,
 } from './loop';
+import { THINKING_PREFILL_FLAG_ID, assertThinkingPrefillSupported } from './thinkingPrefill';
 
 export interface IAgentPromptChannel {
   readonly _serviceBrand: undefined;
@@ -35,15 +39,22 @@ export class AgentPromptChannel implements IAgentPromptChannel {
     @IEventService private readonly eventService: IEventService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IFlagService private readonly flags: IFlagService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
 
   async submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
+    if (payload.thinkingPrefill !== undefined) this.assertThinkingPrefill();
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
     const status = this.loop.snapshot();
-    const { id } = this.loop.submit({
-      message: { role: 'user', content: [...payload.input] },
-      meta: { promptId: payload.promptId, origin: { kind: 'user' }, tracked: true },
-    });
+    const { id } = this.loop.submit(
+      {
+        message: { role: 'user', content: [...payload.input] },
+        meta: { promptId: payload.promptId, origin: { kind: 'user' }, tracked: true },
+      },
+      { thinkingPrefill: payload.thinkingPrefill },
+    );
     if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
     return launchResult(this.loop, id);
   }
@@ -61,6 +72,15 @@ export class AgentPromptChannel implements IAgentPromptChannel {
     );
     if (status.state === 'running' && status.activePromptId === undefined) return undefined;
     return launchResult(this.loop, id);
+  }
+
+  private assertThinkingPrefill(): void {
+    const context = this.profile.resolveModelContext();
+    assertThinkingPrefillSupported(
+      this.flags.enabled(THINKING_PREFILL_FLAG_ID),
+      this.modelCatalog.get(context.modelAlias),
+      context.thinkingLevel,
+    );
   }
 
   private async updateMetadata(text: string | undefined): Promise<void> {

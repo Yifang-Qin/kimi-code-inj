@@ -12,7 +12,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TuiMode, UpgradePreferences } from './config';
+import type { InjConfig, MarkdownConfig, NotificationsConfig, StatusLineConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
@@ -98,6 +98,8 @@ export interface AppState {
   /** Footer status line customization from tui.toml; absent means the default layout. */
   statusLine?: StatusLineConfig;
   markdown?: MarkdownConfig;
+  /** `/inj` thinking prefix choice from tui.toml; absent in older fixtures means the default prefix. */
+  inj?: InjConfig;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
@@ -304,6 +306,15 @@ export interface InlineSkillActivation {
   readonly args?: string;
 }
 
+/**
+ * An `/inj` submission: the thinking prefix sent with the prompt, and the
+ * `/inj <text>` line used to restore the editor (never sent to the model).
+ */
+export interface InjSubmission {
+  readonly thinkingPrefill: string;
+  readonly restoreText: string;
+}
+
 export interface QueuedMessage {
   readonly text: string;
   readonly agentId?: string;
@@ -320,6 +331,8 @@ export interface QueuedMessage {
   readonly occupiedRetry?: boolean;
   /** Auto-compaction serial at enqueue time; a mismatch at dequeue skips the fire. */
   readonly queuedAfterAutoSerial?: number;
+  /** Set for `/inj` prompts; such items are never steered (steer carries no prefill). */
+  readonly inj?: InjSubmission;
 }
 
 /**

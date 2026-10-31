@@ -34,12 +34,14 @@ function makeHost() {
       finalizeTurn: vi.fn(),
       finalizeLiveTextBuffers: vi.fn(),
       completeToolResult: vi.fn(),
+      appendThinkingPrefill: vi.fn(),
     },
     requireSession: vi.fn(),
     setAppState: vi.fn((patch: Record<string, unknown>) =>
       Object.assign(host.state.appState, patch),
     ),
     patchLivePane: vi.fn(),
+    updateActivityPane: vi.fn(),
     resetLivePane: vi.fn(),
     showError: vi.fn(),
     showStatus: vi.fn(),
@@ -182,5 +184,48 @@ describe('SessionEventHandler step retry state', () => {
     handler.clearStepRetryAttemptTimer();
     vi.advanceTimersByTime(10_000);
     expect(host.state.appState.stepRetry).toMatchObject({ phase: 'backoff' });
+  });
+});
+
+describe('SessionEventHandler /inj thinking prefill display', () => {
+  const event = (type: string, fields: Record<string, unknown>) =>
+    ({ type, sessionId: 's1', agentId: 'main', ...fields }) as any;
+
+  it('renders the prefix once on the first step of the turn bound to its promptId', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.registerThinkingPrefill('p-inj', 'Should plan.');
+
+    handler.handleEvent(event('turn.started', { turnId: 1, promptId: 'other', origin: { kind: 'user' } }), vi.fn());
+    handler.handleEvent(event('turn.step.started', { turnId: 1, step: 1 }), vi.fn());
+    handler.handleEvent(event('turn.ended', { turnId: 1, reason: 'completed' }), vi.fn());
+    expect(host.streamingUI.appendThinkingPrefill).not.toHaveBeenCalled();
+
+    handler.handleEvent(event('turn.started', { turnId: 2, promptId: 'p-inj', origin: { kind: 'user' } }), vi.fn());
+    handler.handleEvent(event('turn.step.started', { turnId: 2, step: 1 }), vi.fn());
+    handler.handleEvent(event('turn.step.started', { turnId: 2, step: 1 }), vi.fn());
+    handler.handleEvent(event('turn.step.started', { turnId: 2, step: 2 }), vi.fn());
+    handler.handleEvent(event('turn.ended', { turnId: 2, reason: 'completed' }), vi.fn());
+    expect(host.streamingUI.appendThinkingPrefill).toHaveBeenCalledTimes(1);
+    expect(host.streamingUI.appendThinkingPrefill).toHaveBeenCalledWith('Should plan.');
+
+    handler.handleEvent(event('turn.started', { turnId: 3, promptId: 'p-inj', origin: { kind: 'user' } }), vi.fn());
+    handler.handleEvent(event('turn.step.started', { turnId: 3, step: 1 }), vi.fn());
+    expect(host.streamingUI.appendThinkingPrefill).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a prefix whose dispatch failed or whose session was reset', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.registerThinkingPrefill('p-failed', 'A');
+    handler.dropThinkingPrefill('p-failed');
+    handler.registerThinkingPrefill('p-reset', 'B');
+    handler.resetRuntimeState();
+
+    for (const [turnId, promptId] of [[1, 'p-failed'], [2, 'p-reset']] as const) {
+      handler.handleEvent(event('turn.started', { turnId, promptId, origin: { kind: 'user' } }), vi.fn());
+      handler.handleEvent(event('turn.step.started', { turnId, step: 1 }), vi.fn());
+    }
+    expect(host.streamingUI.appendThinkingPrefill).not.toHaveBeenCalled();
   });
 });

@@ -63,7 +63,7 @@ export class QueuePaneComponent extends DockSection {
 
 function renderItem(item: QueuedMessage, width: number): string {
   const accent = (text: string) => currentTheme.fg('accent', text);
-  const singleLine = item.text.replaceAll(/\s+/g, ' ').trim();
+  const singleLine = (item.inj?.restoreText ?? item.text).replaceAll(/\s+/g, ' ').trim();
   const prefix = `  ${SELECT_POINTER} `;
   if (item.mode === 'bash') {
     // Shell commands get a `$ ` prompt and the shell-mode hue so they read

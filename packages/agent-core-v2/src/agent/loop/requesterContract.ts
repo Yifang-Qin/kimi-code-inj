@@ -50,6 +50,7 @@ export interface AgentLLMRequestOverrides {
   usedContextTokens?: number;
   promptCacheProbe?: 'compaction';
   onAttemptRetry?: () => void;
+  thinkingPrefill?: string;
 }
 
 export interface AgentLLMRequestTask {

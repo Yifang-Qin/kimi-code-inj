@@ -50,6 +50,7 @@ describe('update preference commands', () => {
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      inj: { mode: 'default', customText: '' },
     });
     expect(setAppState).toHaveBeenCalledWith({ upgrade: { autoInstall: false } });
     expect(track).toHaveBeenCalledWith('upgrade_preference_changed', { auto_install: false });

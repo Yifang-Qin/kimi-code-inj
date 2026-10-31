@@ -87,9 +87,10 @@ export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
   readonly promptId?: string;
+  readonly thinkingPrefill?: string;
 }
 
-export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
+export interface SessionPromptWithSkillsRpcInput extends Omit<SessionPromptRpcInput, 'thinkingPrefill'> {
   readonly skills: readonly PromptSkillActivation[];
   readonly steerIfActive?: boolean;
 }

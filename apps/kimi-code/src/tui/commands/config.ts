@@ -24,7 +24,7 @@ import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
+import { DEFAULT_INJ_CONFIG, DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import {
@@ -84,6 +84,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
     markdown: host.state.appState.markdown ?? DEFAULT_MARKDOWN_CONFIG,
+    inj: host.state.appState.inj ?? DEFAULT_INJ_CONFIG,
   };
 }
 

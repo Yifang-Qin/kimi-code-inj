@@ -162,7 +162,10 @@ export class Session {
     });
   }
 
-  async prompt(input: string | PromptInput, options?: { promptId?: string }): Promise<void> {
+  async prompt(
+    input: string | PromptInput,
+    options?: { promptId?: string; thinkingPrefill?: string },
+  ): Promise<void> {
     this.ensureOpen();
     if (options?.promptId !== undefined && options.promptId.length === 0) {
       throw new TypeError('promptId must not be empty');
@@ -171,6 +174,7 @@ export class Session {
       sessionId: this.id,
       input: normalizePromptInput(input),
       promptId: options?.promptId,
+      thinkingPrefill: options?.thinkingPrefill,
     });
   }
 

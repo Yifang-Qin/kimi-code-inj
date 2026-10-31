@@ -15,7 +15,7 @@ import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { retryErrorFields } from '#/_base/utils/retry';
 import { AgentLoopRequester } from './requester';
 import { createAgentMediaPolicy } from './mediaPolicy';
-import type { LoopRequester } from './requesterContract';
+import type { AgentLLMRequestOverrides, LoopRequester } from './requesterContract';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
@@ -220,9 +220,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       prepareTurnConfig: (turnId) => this.requester.prepareTurnConfig(turnId),
       currentCredentialProvider: () => this.requester.currentCredentialProvider(),
       credentialProviderForTurn: (turnId) => this.requester.credentialProviderForTurn(turnId),
-      request: (overrides, onPart, signal) => this.requester.request(overrides, onPart, signal),
-      start: (overrides, onPart, signal) => this.requester.start(overrides, onPart, signal),
+      request: (overrides, onPart, signal) =>
+        this.requester.request(this.withThinkingPrefill(overrides), onPart, signal),
+      start: (overrides, onPart, signal) =>
+        this.requester.start(this.withThinkingPrefill(overrides), onPart, signal),
     };
+  }
+
+  private withThinkingPrefill(
+    overrides: AgentLLMRequestOverrides | undefined,
+  ): AgentLLMRequestOverrides | undefined {
+    const active = this.active;
+    const source = overrides?.source;
+    if (active?.thinkingPrefill === undefined) return overrides;
+    if (source?.type !== 'turn' || source.turnId !== active.id) return overrides;
+    return { ...overrides, thinkingPrefill: active.thinkingPrefill };
   }
 
   private engineOptions(): CreateMachineEngineOptions {
@@ -338,7 +350,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const tracked = meta?.tracked === true;
     const createdAt = meta?.createdAt ?? (tracked ? new Date().toISOString() : '');
     const userMessageId = meta?.userMessageId ?? (tracked ? id : '');
-    const waiter = this.createWaiter(id, meta?.promptId, options?.onMaterialize);
+    const waiter = this.createWaiter(
+      id,
+      meta?.promptId,
+      options?.onMaterialize,
+      options?.thinkingPrefill,
+    );
     this.terminalStates.delete(id);
     this.promptWaiters.set(id, waiter);
     const message: ContextMessage = {
@@ -521,6 +538,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     id: string,
     dispatchPromptId?: string,
     onMaterialize?: () => void,
+    thinkingPrefill?: string,
   ): PromptWaiter {
     return {
       id,
@@ -528,6 +546,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       launched: createControlledPromise<Turn | undefined>(),
       completion: createControlledPromise<PromptCompletion>(),
       onMaterialize,
+      thinkingPrefill,
     };
   }
 
@@ -1292,6 +1311,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       mode: undefined,
       providerType: undefined,
       protocol: undefined,
+      thinkingPrefill: waiter.thinkingPrefill,
     };
     this.active = active;
     this.armTurnWatch(active);
@@ -1601,6 +1621,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         step.providerFinishReason = event.finish?.finishReason ?? undefined;
         step.rawFinishReason = event.finish?.rawFinishReason ?? undefined;
         step.messageId = event.messageId;
+        turn.thinkingPrefill = undefined;
         for (const part of event.entry.message.content) {
           this.context.appendLoopEvent({
             type: 'content.part',
@@ -2292,6 +2313,7 @@ interface PromptWaiter {
   readonly launched: ReturnType<typeof createControlledPromise<Turn | undefined>>;
   readonly completion: ReturnType<typeof createControlledPromise<PromptCompletion>>;
   readonly onMaterialize?: () => void;
+  readonly thinkingPrefill?: string;
   failedEntry?: UserEntry;
 }
 
@@ -2401,6 +2423,7 @@ interface ActiveTurn {
   mode: 'agent' | 'plan' | undefined;
   providerType: string | undefined;
   protocol: string | undefined;
+  thinkingPrefill: string | undefined;
 }
 
 function cancelReasonFor(cancellation: unknown): 'user_cancelled' | 'aborted' {

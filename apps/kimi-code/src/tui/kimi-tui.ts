@@ -165,6 +165,7 @@ import {
   type KimiTUIOptions,
   type LivePaneState,
   type LoginProgressSpinnerHandle,
+  type InjSubmission,
   type QueuedMessage,
   type EnvironmentSlotState,
   type SteerInputItem,
@@ -311,6 +312,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
     markdown: input.tuiConfig.markdown,
+    inj: input.tuiConfig.inj,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -333,6 +335,7 @@ interface SendMessageOptions {
    */
   readonly lease?: StagingLease;
   readonly occupiedRetry?: boolean;
+  readonly inj?: InjSubmission;
 }
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1572,8 +1575,16 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
-    if (this.btwPanelController.sendUserInput(text)) return;
+  sendInjectedUserInput(text: string, inj: InjSubmission): void {
+    void this.sendNormalUserInput(text, undefined, inj);
+  }
+
+  async sendNormalUserInput(
+    text: string,
+    preExtracted?: ExtractionResult,
+    inj?: InjSubmission,
+  ): Promise<void> {
+    if (inj === undefined && this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -1636,7 +1647,7 @@ export class KimiTUI {
     // Idle cache-hint interception sits before session creation; it is
     // synchronous unless a hint actually fires. Aside from the bounded
     // ingestion wait above, the send path stays await-free up to sendMessage.
-    if (this.cacheHint.maybeInterceptOnSubmit(text, extraction)) {
+    if (inj === undefined && this.cacheHint.maybeInterceptOnSubmit(text, extraction)) {
       // The stash owns the extraction from here: its resend re-leases inside
       // the re-entered send path, its restore goes through releaseRecalled
       // (see CacheHintController). Detach so the stash is not double-owned.
@@ -1658,9 +1669,10 @@ export class KimiTUI {
         imageAttachmentIds: extraction.imageAttachmentIds,
         videoAttachmentIds: extraction.videoAttachmentIds,
         lease: stagingLease,
+        inj,
       });
     } else {
-      this.sendMessage(session, text);
+      this.sendMessage(session, text, { inj });
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
@@ -1995,6 +2007,7 @@ export class KimiTUI {
       mode,
       mediaSnapshots: options?.mediaSnapshots,
       inlineSkillActivations: options?.inlineSkillActivations,
+      inj: options?.inj,
     };
   }
 
@@ -2140,6 +2153,7 @@ export class KimiTUI {
         imageAttachmentIds: item.imageAttachmentIds,
         videoAttachmentIds: item.videoAttachmentIds,
         occupiedRetry: item.occupiedRetry,
+        inj: item.inj,
       });
     });
   }
@@ -2216,6 +2230,18 @@ export class KimiTUI {
   }
 
   private sendMessageInternal(session: Session, input: string, options?: SendMessageOptions): void {
+    // A goal-active prompt is steered into the goal turn, and a steer carries
+    // no thinking prefill: refuse instead of silently dropping the prefix.
+    if (options?.inj !== undefined && this.state.appState.goal?.status === 'active') {
+      this.staging.defer(options.lease);
+      this.staging.releaseRecalled([
+        ...(options.imageAttachmentIds ?? []),
+        ...(options.videoAttachmentIds ?? []),
+      ]);
+      this.showError('/inj is unavailable while a goal is active.');
+      this.restoreInputText(options.inj.restoreText);
+      return;
+    }
     const imageAttachmentIds =
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
@@ -2275,7 +2301,8 @@ export class KimiTUI {
         'user',
         !goalActive && stagingIds.length > 0 ? randomUUID() : undefined,
       );
-    const submissionId = stagingLease?.submissionId;
+    const submissionId =
+      stagingLease?.submissionId ?? (options?.inj === undefined ? undefined : randomUUID());
     const resend = (): void => {
       this.state.queuedMessages.unshift({
         ...this.toQueuedMessage(input, options),
@@ -2286,7 +2313,7 @@ export class KimiTUI {
     };
     const restoreInput = (): void => {
       this.staging.releaseRecalled(stagingIds);
-      this.restoreInputText(input);
+      this.restoreInputText(options?.inj?.restoreText ?? input);
     };
     // While a goal is being pursued the engine holds its active turn across the
     // whole continuation loop, so a fresh prompt races the goal driver at every
@@ -2326,12 +2353,21 @@ export class KimiTUI {
       });
       return;
     }
+    const thinkingPrefill = options?.inj?.thinkingPrefill;
+    if (submissionId !== undefined && thinkingPrefill !== undefined) {
+      this.sessionEventHandler.registerThinkingPrefill(submissionId, thinkingPrefill);
+    }
     const request = this.trackPendingEntries(
       [entry],
       this.dispatchPreparedInput(
-        session, sdkInput, (parts) => session.prompt(parts, { promptId: submissionId }),
+        session,
+        sdkInput,
+        (parts) => session.prompt(parts, { promptId: submissionId, thinkingPrefill }),
       ),
     );
+    if (submissionId !== undefined && thinkingPrefill !== undefined) {
+      void request.catch(() => this.sessionEventHandler.dropThinkingPrefill(submissionId));
+    }
     this.staging.trackDispatch(stagingLease, request, (error) => {
       const recovered = this.handlePromptConflict({
         session,
@@ -2450,6 +2486,7 @@ export class KimiTUI {
     // new input; a non-steerable backlog (bash, slash-skill, inline-skill
     // bundle) cannot, and then this input queues behind it instead.
     if (
+      options?.inj === undefined &&
       this.canSteerQueueIntoRunningTurn() &&
       this.state.queuedMessages.every(isSteerableQueuedMessage)
     ) {
@@ -2509,7 +2546,7 @@ export class KimiTUI {
       firstCompact === -1 ? this.state.queuedMessages.length : firstCompact,
     );
     const batch = manual
-      ? beforeBarrier.filter((message) => message.mode !== 'bash')
+      ? beforeBarrier.filter((message) => message.mode !== 'bash' && message.inj === undefined)
       : beforeBarrier;
     if (batch.length === 0 || (!manual && !batch.every(isSteerableQueuedMessage))) return;
     const pending = [...batch];
@@ -5212,6 +5249,7 @@ export class KimiTUI {
 function isSteerableQueuedMessage(message: QueuedMessage): boolean {
   return (
     message.inlineSkillActivations === undefined &&
+    message.inj === undefined &&
     message.mode !== 'bash' &&
     message.mode !== 'compact'
   );

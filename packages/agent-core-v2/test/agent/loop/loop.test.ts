@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/index';
-import type { LoopRequester } from '#/agent/loop/requesterContract';
+import type { AgentLLMRequestOverrides, LoopRequester } from '#/agent/loop/requesterContract';
 import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
@@ -15,6 +15,10 @@ import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { IAgentPromptChannel } from '#/agent/loop/promptChannel';
+import { assertThinkingPrefillSupported } from '#/agent/loop/thinkingPrefill';
+import type { Model } from '#/llm-adapter/model/catalog';
+import { ErrorCodes } from '#/errors';
 import { createActor } from '#human/xstate2';
 import { createAgentMachine } from '#human/agent/machine';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -2244,6 +2248,153 @@ describe('step timing split propagation', () => {
   });
 });
 
+describe('thinking prefill propagation', () => {
+  it('sends the prompt thinking prefill on the first step and its retries only', async () => {
+    const ctx = createTestAgent(permissionModeServices('yolo'));
+    enableThinking(ctx);
+    const turnRequests = recordTurnRequests(ctx);
+    try {
+      const lookupTool: ExecutableTool = {
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Lookup',
+          execute: async () => ({ output: 'lookup-result' }),
+        }),
+      };
+      ctx.get(IAgentProfileService).update({ activeToolNames: ['Lookup'] });
+      ctx.get(IAgentToolRegistryService).register(lookupTool);
+      const loopService = ctx.get(IAgentLoopService);
+
+      ctx.mockNextProviderResponse({ error: new APIProviderRateLimitError('slow down', null, 1) });
+      ctx.mockNextResponse(
+        { type: 'text', text: 'looking' },
+        { type: 'function', id: 'call-lookup-1', name: 'Lookup', arguments: '{}' },
+      );
+      ctx.mockNextResponse({ type: 'text', text: 'found it' });
+      const first = submitPromptTurn(
+        loopService,
+        {
+          message: { role: 'user', content: [{ type: 'text', text: 'look it up' }] },
+          meta: { origin: { kind: 'user' } },
+        },
+        { thinkingPrefill: 'Let me check the lookup tool.' },
+      );
+      await expect(first.turn.result).resolves.toMatchObject({ type: 'completed' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'plain answer' });
+      const second = submitTurn(loopService, 'again');
+      await expect(second.turn.result).resolves.toMatchObject({ type: 'completed' });
+
+      expect(ctx.llmCalls).toHaveLength(4);
+      expect(
+        ctx.allEvents
+          .filter((event) => event.type === '[rpc]' && event.event === 'turn.step.retrying')
+          .map((event) => (event.args as { step: number }).step),
+      ).toEqual([1]);
+      expect(turnRequests.map(({ turnId, step, thinkingPrefill }) => ({ turnId, step, thinkingPrefill }))).toEqual([
+        { turnId: first.turn.id, step: 1, thinkingPrefill: 'Let me check the lookup tool.' },
+        { turnId: first.turn.id, step: 2, thinkingPrefill: 'Let me check the lookup tool.' },
+        { turnId: first.turn.id, step: 3, thinkingPrefill: undefined },
+        { turnId: second.turn.id, step: 1, thinkingPrefill: undefined },
+      ]);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
+
+describe('thinking prefill support', () => {
+  const kimiModel: Model = {
+    id: 'kimi-model',
+    name: 'kimi-model',
+    aliases: [],
+    protocol: 'openai',
+    headers: {},
+    capabilities: {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: true,
+      tool_use: true,
+      max_context_tokens: 128000,
+    },
+    maxContextSize: 128000,
+    alwaysThinking: false,
+    providerType: 'kimi',
+    providerName: 'kimi',
+  };
+
+  it('accepts a thinking kimi model on the openai protocol', () => {
+    expect(() => assertThinkingPrefillSupported(true, kimiModel, 'on')).not.toThrow();
+    expect(() => assertThinkingPrefillSupported(true, kimiModel, 'high')).not.toThrow();
+    expect(() => assertThinkingPrefillSupported(true, kimiModel, undefined)).not.toThrow();
+  });
+
+  it('rejects a disabled flag, other providers or protocols, and thinking off', () => {
+    const invalid = { code: ErrorCodes.REQUEST_INVALID };
+    const rejected = (check: () => void) => {
+      try {
+        check();
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    };
+    expect(rejected(() => assertThinkingPrefillSupported(false, kimiModel, 'on'))).toMatchObject(invalid);
+    expect(
+      rejected(() => assertThinkingPrefillSupported(true, { ...kimiModel, providerType: 'openai' }, 'on')),
+    ).toMatchObject(invalid);
+    expect(
+      rejected(() => assertThinkingPrefillSupported(true, { ...kimiModel, providerType: undefined }, 'on')),
+    ).toMatchObject(invalid);
+    expect(
+      rejected(() => assertThinkingPrefillSupported(true, { ...kimiModel, protocol: 'anthropic' }, 'on')),
+    ).toMatchObject(invalid);
+    expect(rejected(() => assertThinkingPrefillSupported(true, kimiModel, 'off'))).toMatchObject(invalid);
+  });
+
+  it('rejects a prefilled prompt at the channel while thinking is off', async () => {
+    const ctx = createTestAgent();
+    try {
+      await expect(
+        ctx.get(IAgentPromptChannel).submit({
+          input: [{ type: 'text', text: 'hello' }],
+          thinkingPrefill: 'prefix',
+        }),
+      ).rejects.toMatchObject({
+        code: ErrorCodes.REQUEST_INVALID,
+        message: expect.stringContaining('requires thinking to be enabled'),
+      });
+      expect(ctx.get(IAgentLoopService).snapshot().queue).toHaveLength(0);
+      expect(ctx.llmCalls).toHaveLength(0);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('forwards a prefilled prompt from the channel to the first turn request', async () => {
+    const ctx = createTestAgent();
+    enableThinking(ctx);
+    const turnRequests = recordTurnRequests(ctx);
+    try {
+      ctx.get(IAgentProfileService).update({ activeToolNames: [] });
+      ctx.mockNextResponse({ type: 'text', text: 'answer' });
+      const launched = await ctx.get(IAgentPromptChannel).submit({
+        input: [{ type: 'text', text: 'hello' }],
+        thinkingPrefill: 'prefix',
+      });
+      await ctx.untilTurnEnd();
+      expect(turnRequests).toEqual([
+        { turnId: launched?.turn_id, step: 1, thinkingPrefill: 'prefix' },
+      ]);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
+
 describe('aborted step tool execution', () => {
   it('accounts model usage when the step is aborted during tool execution', async () => {
     const ctx = createTestAgent(
@@ -2351,6 +2502,42 @@ function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Tur
     message: { role: 'user', content: [{ type: 'text', text }] },
     meta: { origin: { kind: 'user' } },
   });
+}
+
+function enableThinking(ctx: TestAgentContext): void {
+  ctx.configure({
+    modelCapabilities: {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: true,
+      tool_use: true,
+      max_context_tokens: 1_000_000,
+    },
+  });
+  ctx.get(IAgentProfileService).setThinking('on');
+}
+
+function recordTurnRequests(
+  ctx: TestAgentContext,
+): { turnId: number; step: number | undefined; thinkingPrefill: string | undefined }[] {
+  const seen: { turnId: number; step: number | undefined; thinkingPrefill: string | undefined }[] = [];
+  const real = (ctx.get(IAgentLoopService) as unknown as { requester: LoopRequester }).requester;
+  const record = (overrides: AgentLLMRequestOverrides | undefined): AgentLLMRequestOverrides | undefined => {
+    const source = overrides?.source;
+    if (source?.type === 'turn') {
+      seen.push({ turnId: source.turnId, step: source.step, thinkingPrefill: overrides?.thinkingPrefill });
+    }
+    return overrides;
+  };
+  replaceLoopRequester(ctx, {
+    prepareTurnConfig: (turnId) => real.prepareTurnConfig(turnId),
+    currentCredentialProvider: () => real.currentCredentialProvider(),
+    credentialProviderForTurn: (turnId) => real.credentialProviderForTurn(turnId),
+    request: (overrides, onPart, signal) => real.request(record(overrides), onPart, signal),
+    start: (overrides, onPart, signal) => real.start(record(overrides), onPart, signal),
+  });
+  return seen;
 }
 
 function replaceLoopRequester(ctx: TestAgentContext, requester: LoopRequester): void {

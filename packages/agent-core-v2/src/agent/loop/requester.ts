@@ -15,6 +15,7 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { cacheProbeUsage } from '#/agent/usage/cacheProbe';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import {
   APIContextOverflowError,
   APIStatusError,
@@ -73,6 +74,7 @@ import {
   hasStrictStructureRecovery,
 } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
+import { THINKING_PREFILL_FLAG_ID, assertThinkingPrefillSupported } from './thinkingPrefill';
 import type { AgentMediaPolicyFactory } from './mediaPolicy';
 import { isAbortError } from '#/_base/utils/abort';
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -166,6 +168,7 @@ export class AgentLoopRequester implements LoopRequester {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     this.projector = new AgentLoopProjector(log, telemetry, states);
     this.states.contributeState(llmRequestTraceKey);
@@ -651,8 +654,17 @@ export class AgentLoopRequester implements LoopRequester {
     };
 
     const messages = overrides.messages ?? this.context.get();
+    let request = this.protocolRegistry.request(model, params);
+    if (overrides.thinkingPrefill !== undefined) {
+      assertThinkingPrefillSupported(
+        this.flags.enabled(THINKING_PREFILL_FLAG_ID),
+        model,
+        resolved.thinkingLevel,
+      );
+      request = request.with({ protocol: { options: { thinkingPrefill: overrides.thinkingPrefill } } });
+    }
     return {
-      request: this.protocolRegistry.request(model, params),
+      request,
       model,
       params,
       modelAlias: resolved.modelAlias,

@@ -17,6 +17,7 @@ import type { ResolvedTheme } from '../theme/colors';
 import type { TUIState } from '../tui-state';
 import type {
   AppState,
+  InjSubmission,
   InlineSkillActivation,
   LoginProgressSpinnerHandle,
   QueuedMessage,
@@ -69,6 +70,7 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleInjCommand, handleInjSetupCommand } from './inj';
 import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
 import { handleRemoteControlCommand, handleWebCommand } from './web';
@@ -206,6 +208,8 @@ export interface SlashCommandHost {
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
+  /** Submit a prompt carrying an `/inj` thinking prefix (see InjSubmission). */
+  sendInjectedUserInput(text: string, inj: InjSubmission): void;
   /**
    * Submit a prompt that explicitly activates one or more skills inline
    * (v2 engine only): all activations ride the same submission as the prompt
@@ -466,6 +470,12 @@ async function handleBuiltInSlashCommand(
       return;
     case 'editor':
       await handleEditorCommand(host, args);
+      return;
+    case 'inj':
+      handleInjCommand(host, args);
+      return;
+    case 'inj-setup':
+      await handleInjSetupCommand(host, args);
       return;
     case 'theme':
       await handleThemeCommand(host, args);

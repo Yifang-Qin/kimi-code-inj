@@ -176,7 +176,23 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
   flatten: (native, module) => {
     const { extra_body: extraBody, ...extras } = module.options?.extras ?? {};
     const options = { ...module.options, extras: { ...extras, ...extraBody } };
-    return base.flatten(native, { ...module, options });
+    const thinkingPrefill = module.options?.thinkingPrefill;
+    const prefilled =
+      thinkingPrefill === undefined
+        ? native
+        : {
+            ...native,
+            messages: [
+              ...native.messages,
+              {
+                role: 'assistant' as const,
+                content: '',
+                reasoning_content: thinkingPrefill,
+                partial: true,
+              },
+            ],
+          };
+    return base.flatten(prefilled, { ...module, options });
   },
   decodeError: withKimiErrors(base),
 }));

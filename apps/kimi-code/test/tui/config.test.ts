@@ -75,6 +75,7 @@ auto_install = false
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      inj: { mode: 'default', customText: '' },
     });
   });
 
@@ -144,6 +145,7 @@ command = "   "
       upgrade: { autoInstall: true },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      inj: { mode: 'default', customText: '' },
     });
   });
 
@@ -194,7 +196,17 @@ command = "   "
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      inj: { mode: 'default', customText: '' },
     });
+  });
+
+  it('round-trips the /inj prefix choice, keeping multi-line custom text', async () => {
+    const customText = 'Plan first.\nThen "act" with care.';
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, inj: { mode: 'custom', customText } }, filePath);
+    expect((await loadTuiConfig(filePath)).inj).toEqual({ mode: 'custom', customText });
+
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, inj: { mode: 'default', customText } }, filePath);
+    expect((await loadTuiConfig(filePath)).inj).toEqual({ mode: 'default', customText });
   });
 
   it('preserves the legacy opt-out when an unrelated preference is saved', async () => {

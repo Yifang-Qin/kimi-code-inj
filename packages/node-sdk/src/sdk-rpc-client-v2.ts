@@ -2360,6 +2360,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       await agent.prompt({
         input: input.input,
         promptId: input.promptId,
+        thinkingPrefill: input.thinkingPrefill,
       });
     });
   }

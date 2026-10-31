@@ -83,6 +83,7 @@ export interface AgentFacade {
   prompt(input: {
     input: readonly ContentPart[];
     promptId?: string;
+    thinkingPrefill?: string;
   }): Promise<PromptLaunchResult>;
   /**
    * Submit one prompt with one or more skill activations bundled into the

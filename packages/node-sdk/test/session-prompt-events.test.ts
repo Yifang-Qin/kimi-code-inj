@@ -187,6 +187,92 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('sends the /inj thinking prefill to Kimi on the first step of its prompt only', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const requests: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    fetchStub!.mockImplementation(
+      async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
+        requests.push(JSON.parse(init?.body as string));
+        const body =
+          requests.length === 1
+            ? [
+                sseChunk({
+                  role: 'assistant',
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call-1',
+                      type: 'function',
+                      function: { name: 'NoSuchTool', arguments: '{}' },
+                    },
+                  ],
+                }),
+                sseChunk({}, 'tool_calls'),
+                'data: [DONE]',
+              ]
+                .map((line) => `${line}\n\n`)
+                .join('')
+            : sseBody('done');
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      },
+    );
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    try {
+      await harness.setConfig({
+        providers: {
+          kimi: { type: 'kimi', baseUrl: 'https://model.example.test/v1', apiKey: 'sk-test' },
+          local: { type: 'openai', baseUrl: 'https://model.example.test/v1', apiKey: 'sk-test' },
+        },
+        models: {
+          'kimi-model': {
+            provider: 'kimi',
+            model: 'kimi-model',
+            maxContextSize: 262144,
+            capabilities: ['thinking'],
+          },
+          'fake-model': { provider: 'local', model: 'fake-model', maxContextSize: 262144 },
+        },
+        defaultModel: 'kimi-model',
+      });
+      const session = await harness.createSession({ id: 'ses_inj', workDir });
+      const prefill = 'I should follow the user command. Should plan.';
+
+      let done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      await session.prompt('do it', { thinkingPrefill: prefill });
+      expect(await done).toMatchObject({ reason: 'completed' });
+      done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      await session.prompt('again');
+      expect(await done).toMatchObject({ reason: 'completed' });
+
+      expect(requests).toHaveLength(3);
+      expect(requests[0]!.messages.at(-1)).toEqual({
+        role: 'assistant',
+        content: '',
+        reasoning_content: prefill,
+        partial: true,
+      });
+      for (const request of requests.slice(1)) {
+        expect(JSON.stringify(request.messages)).not.toContain('"partial"');
+        expect(JSON.stringify(request.messages)).not.toContain(prefill);
+      }
+
+      await session.setModel('fake-model');
+      await expect(session.prompt('x', { thinkingPrefill: prefill })).rejects.toThrow(
+        /requires a Kimi provider/,
+      );
+      expect(requests).toHaveLength(3);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('preserves existing custom metadata when an SDK metadata patch is resumed', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();

@@ -26,6 +26,14 @@ const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'off', description: 'Turn swarm mode off' },
 ];
 
+const INJ_SETUP_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'default', description: 'Use the default thinking prefix' },
+  { value: 'custom', description: 'Use the saved custom thinking prefix' },
+  { value: 'edit', description: 'Edit the custom thinking prefix (multi-line)' },
+  { value: 'show', description: 'Show the current /inj setting' },
+  { value: 'set', description: 'Set the custom thinking prefix directly' },
+];
+
 const TOWER_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'status', description: 'Report tower status' },
   { value: 'teardown', description: 'Tear down the tower' },
@@ -54,6 +62,11 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
 /** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/inj-setup` command (subcommands). */
+export function injSetupArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(INJ_SETUP_ARG_COMPLETIONS, argumentPrefix);
 }
 
 /** Argument autocompletion for the `/tower` command (subcommands). */
@@ -377,6 +390,24 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Withdraw the last prompt from the transcript',
     priority: 80,
     availability: 'idle-only',
+  },
+  {
+    name: 'inj',
+    aliases: [],
+    description: 'Send a prompt whose first model step continues from the /inj thinking prefix',
+    priority: 60,
+    argumentHint: '<text>',
+    // Queues behind a running turn like a plain prompt.
+    availability: 'always',
+  },
+  {
+    name: 'inj-setup',
+    aliases: [],
+    description: 'Choose, edit or show the /inj thinking prefix',
+    priority: 60,
+    argumentHint: '[default|custom|edit|show|set <text>]',
+    completeArgs: injSetupArgumentCompletions,
+    availability: 'always',
   },
   {
     name: 'editor',

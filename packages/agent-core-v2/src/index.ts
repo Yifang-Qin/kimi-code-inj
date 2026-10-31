@@ -412,6 +412,7 @@ export * from '#/agent/toolDedupe/toolDedupeService';
 export * from '#/agent/agentsMdReminder/agentsMdReminder';
 export * from '#/agent/agentsMdReminder/agentsMdReminderService';
 import '#/agent/toolSelect/flag';
+export * from '#/agent/loop/thinkingPrefill';
 export * from '#/agent/tools/select-tools/select-tools';
 import '#/agent/tools/select-tools/selectToolsTool';
 export * from '#/agent/toolSelect/dynamicTools';

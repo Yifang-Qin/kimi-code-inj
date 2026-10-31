@@ -65,6 +65,17 @@ export const DEFAULT_MARKDOWN_CONFIG: MarkdownConfig = {
   mermaid: 'final',
 };
 
+export const InjConfigSchema = z.object({
+  mode: z.enum(['default', 'custom']),
+  customText: z.string(),
+});
+export type InjConfig = z.infer<typeof InjConfigSchema>;
+
+export const DEFAULT_INJ_CONFIG: InjConfig = {
+  mode: 'default',
+  customText: '',
+};
+
 export const TuiModeSchema = z.enum(['regular', 'fullscreen']);
 export type TuiMode = z.infer<typeof TuiModeSchema>;
 
@@ -98,6 +109,12 @@ export const TuiConfigFileSchema = z.object({
       mermaid: z.string().optional(),
     })
     .optional(),
+  inj: z
+    .object({
+      mode: z.string().optional(),
+      custom_text: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -123,6 +140,8 @@ export const TuiConfigSchema = z.object({
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   markdown: MarkdownConfigSchema.optional(),
+  /** `/inj` thinking prefix choice. Optional only for older hand-built test fixtures. */
+  inj: InjConfigSchema.optional(),
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
@@ -151,6 +170,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
   statusLine: DEFAULT_STATUS_LINE_CONFIG,
   markdown: DEFAULT_MARKDOWN_CONFIG,
+  inj: DEFAULT_INJ_CONFIG,
 });
 
 /**
@@ -289,6 +309,15 @@ export function normalizeTuiConfig(
       warn(`[tui.toml] ignoring unknown markdown.mermaid value: ${mermaidValue}`);
     }
   }
+  const injModeValue = config.inj?.mode;
+  let injMode: InjConfig['mode'] = DEFAULT_INJ_CONFIG.mode;
+  if (injModeValue !== undefined) {
+    if (injModeValue === 'default' || injModeValue === 'custom') {
+      injMode = injModeValue;
+    } else {
+      warn(`[tui.toml] ignoring unknown inj.mode value: ${injModeValue}`);
+    }
+  }
   const tuiModeValue = config.tui_mode;
   let tuiMode: TuiMode = 'regular';
   if (tuiModeValue !== undefined) {
@@ -324,6 +353,10 @@ export function normalizeTuiConfig(
     },
     markdown: {
       mermaid: mermaidMode,
+    },
+    inj: {
+      mode: injMode,
+      customText: config.inj?.custom_text ?? DEFAULT_INJ_CONFIG.customText,
     },
   });
 }
@@ -381,6 +414,10 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
+
+[inj]
+mode = "${config.inj?.mode ?? DEFAULT_INJ_CONFIG.mode}" # "default" | "custom" — thinking prefix used by /inj
+custom_text = "${escapeTomlBasicString(config.inj?.customText ?? '')}"
 
 ${markdownSection}
 ${statusSection}`;

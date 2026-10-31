@@ -42,6 +42,10 @@ export const promptPayloadSchema = z.object({
   // Mirrors `PromptPayload.promptId` in the engine (client-chosen prompt
   // record id, echoed on the consuming turn's `turn.started`).
   promptId: z.string().min(1).optional(),
+  // Mirrors `PromptPayload.thinkingPrefill`: a thinking prefix the first model
+  // step of this prompt's turn continues from (Kimi partial mode). Never
+  // persisted; the engine rejects it when unsupported.
+  thinkingPrefill: z.string().min(1).optional(),
 });
 
 /** Same shape as `PromptSkillActivation` in the engine. */
@@ -51,7 +55,7 @@ export const promptSkillActivationSchema = z.object({
 });
 
 /** Same shape as `PromptWithSkillsInput` in the engine. */
-export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
+export const promptWithSkillsPayloadSchema = promptPayloadSchema.omit({ thinkingPrefill: true }).extend({
   skills: z.array(promptSkillActivationSchema).min(1),
   steerIfActive: z.boolean().optional(),
 });

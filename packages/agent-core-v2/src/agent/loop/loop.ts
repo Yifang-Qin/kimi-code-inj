@@ -131,6 +131,7 @@ export interface Turn {
 export interface LoopSubmitOptions {
   readonly steerIfActive?: boolean;
   readonly onMaterialize?: () => void;
+  readonly thinkingPrefill?: string;
 }
 
 export interface LoopSubmitResult {
@@ -173,6 +174,7 @@ export interface PromptHandle extends PromptSnapshot {
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
   readonly promptId?: string;
+  readonly thinkingPrefill?: string;
 }
 
 export interface SteerPayload {

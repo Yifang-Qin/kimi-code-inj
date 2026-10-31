@@ -81,6 +81,7 @@ export async function applyReloadedTuiConfig(
     upgrade: config.upgrade,
     statusLine: config.statusLine,
     markdown: config.markdown,
+    inj: config.inj,
   });
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
   if ((config.tuiMode ?? 'regular') !== host.state.ui.mode) {
