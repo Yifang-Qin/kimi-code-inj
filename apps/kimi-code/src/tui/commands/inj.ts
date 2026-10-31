@@ -1,4 +1,5 @@
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
+import { InjPrefixEditorComponent } from '../components/dialogs/inj-prefix-editor';
 import { DEFAULT_INJ_CONFIG, saveTuiConfig, type InjConfig } from '../config';
 import { DEFAULT_THINKING_PREFILL, resolveThinkingPrefill } from '../constant/inj';
 import { formatErrorMessage } from '../utils/event-payload';
@@ -48,10 +49,12 @@ export async function handleInjSetupCommand(host: SlashCommandHost, args: string
       await applyInjConfig(host, { mode: 'custom', customText: rest });
       return;
     case 'edit':
-      // The main editor is multi-line (and Ctrl-G opens the external editor),
-      // so editing is a prefilled `/inj-setup set` the user adjusts and submits.
-      host.restoreInputText(`/inj-setup set ${current.customText}`);
-      host.showStatus('Edit the custom prefix, then submit to save it.');
+      host.mountEditorReplacement(
+        new InjPrefixEditorComponent(host.state.ui, current.customText, (result) => {
+          host.restoreEditor();
+          if (result.kind === 'ok') void applyInjConfig(host, { mode: 'custom', customText: result.value });
+        }),
+      );
       return;
     default:
       host.showError(INJ_SETUP_USAGE);
